@@ -81,7 +81,7 @@ def login(
         value=access_token,
         httponly=True,
         secure=True,
-        samesite="lax",
+        samesite="none",
         max_age=60 * 60,
         path="/",
     )
@@ -96,6 +96,9 @@ def logout(response: Response):
     response.delete_cookie(
         key="access_token",
         path="/",
+        secure=True,
+        httponly=True,
+        samesite="none",
     )
 
     return {
