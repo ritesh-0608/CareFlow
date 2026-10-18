@@ -8,3 +8,10 @@ python-multipart
 requests
 psycopg[binary]
 PyJWT
+numpy
+pandas
+scikit-learn
+xgboost
+joblib
+statsmodels
+python-dotenv
