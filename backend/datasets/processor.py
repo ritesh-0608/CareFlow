@@ -1,5 +1,6 @@
 from __future__ import annotations
-
+from io import BytesIO
+from backend.storage import download_dataset
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -402,12 +403,20 @@ def save_uploaded_file(
     file_path.write_bytes(file_bytes)
 
     return str(file_path)
+
 def read_uploaded_csv(
     file_path: str,
 ) -> pd.DataFrame:
     """
-    Read a stored CSV dataset into a DataFrame.
+    Read a stored CSV dataset from Supabase Storage or a local file.
     """
+    file_path = str(file_path)
+    storage_prefix = "supabase://"
+
+    if file_path.startswith(storage_prefix):
+        storage_path = file_path[len(storage_prefix):]
+        file_bytes = download_dataset(storage_path)
+        return pd.read_csv(BytesIO(file_bytes))
 
     path = Path(file_path)
 
@@ -417,6 +426,7 @@ def read_uploaded_csv(
         )
 
     return pd.read_csv(path)
+
 def forecast_hospital(
     dataframe: pd.DataFrame,
     target_column: str,

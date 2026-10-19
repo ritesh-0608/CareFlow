@@ -15,3 +15,4 @@ xgboost
 joblib
 statsmodels
 python-dotenv
+supabase==2.33.0

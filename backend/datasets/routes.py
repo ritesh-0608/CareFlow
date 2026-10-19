@@ -2,7 +2,7 @@ from datetime import date
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
 from fastapi import (
     APIRouter,
@@ -37,6 +37,11 @@ from backend.datasets.processor import (
     forecast_hospital,
     forecast_resource,
     read_uploaded_csv,
+)
+from backend.storage import (
+    upload_dataset as upload_dataset_to_storage,
+    download_dataset as download_dataset_from_storage,
+    delete_dataset as delete_dataset_from_storage,
 )
 
 from backend.datasets.validator import (
@@ -194,6 +199,20 @@ async def upload_dataset(
             },
         )
 
+    # Upload the validated CSV to persistent Supabase Storage.
+    storage_path = f"{current_user.id}/{stored_filename}"
+
+    try:
+        upload_dataset_to_storage(storage_path, file_content)
+    except Exception as exc:
+        if file_path.exists():
+            file_path.unlink()
+
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to store dataset in persistent storage.",
+        ) from exc
+
     # --------------------------------------------------------
     # 9. Create dataset version and update current dataset
     # --------------------------------------------------------
@@ -248,9 +267,7 @@ async def upload_dataset(
             status="uploaded",
             is_current=True,
             version_number=next_version,
-            file_path=str(
-                Path("uploads") / stored_filename
-            ),
+            file_path=f"supabase://{storage_path}",
         )
 
         db.add(dataset)
@@ -286,8 +303,14 @@ async def upload_dataset(
 
     except Exception as exc:
         db.rollback()
+
         if file_path.exists():
             file_path.unlink()
+        try:
+            delete_dataset_from_storage(storage_path)
+        except Exception:
+            pass
+
         raise HTTPException(
             status_code=500,
             detail="Failed to create dataset version due to a database or server error.",
@@ -299,7 +322,7 @@ async def upload_dataset(
     if dataset_type == "hospital_history":
         try:
             dataframe = read_uploaded_csv(
-                file_path
+                str(file_path)
             )
 
             # ----------------------------------------------------
@@ -513,7 +536,7 @@ async def upload_dataset(
     if dataset_type == "hospital_resources":
         try:
             dataframe = read_uploaded_csv(
-                file_path
+                str(file_path)
             )
 
             resource_records = save_resource_records(
@@ -665,7 +688,7 @@ async def upload_dataset(
     if dataset_type == "disease_data":
         try:
             dataframe = read_uploaded_csv(
-                file_path
+                str(file_path)
             )
 
             disease_processing_result = forecast_all_diseases(
@@ -997,6 +1020,29 @@ def download_dataset(
             detail="Dataset file is not available.",
         )
 
+    # Download datasets stored in persistent Supabase Storage.
+    if dataset.file_path.startswith("supabase://"):
+        storage_path = dataset.file_path[len("supabase://"):]
+
+        try:
+            file_content = download_dataset_from_storage(storage_path)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=404,
+                detail="Dataset file is not available.",
+            ) from exc
+
+        return Response(
+            content=file_content,
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="{dataset.filename}"'
+                )
+            },
+        )
+
+    # Backward compatibility for existing local-file records.
     file_path = Path(dataset.file_path)
 
     if not file_path.exists():
@@ -1062,7 +1108,16 @@ def delete_dataset(
     db.commit()
 
     # Remove the stored CSV file after successful DB deletion.
-    if file_path and file_path.exists():
+    if dataset.file_path and dataset.file_path.startswith("supabase://"):
+        storage_path = dataset.file_path[len("supabase://"):]
+
+        try:
+            delete_dataset_from_storage(storage_path)
+        except Exception:
+            # The database deletion has succeeded; storage cleanup can be retried.
+            pass
+
+    elif file_path and file_path.exists():
         file_path.unlink()
 
     return {
